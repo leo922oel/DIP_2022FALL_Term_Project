@@ -105,7 +105,7 @@ def CIECAM(X, Y, Z, surround="avg"):
     z = 1.48 + n ** 0.5
 
     lightness = 100 * np.power(A/A_w, c*z)
-    chroma = ...
+    chroma = np.power(t, 0.9) * np.power(1/100*lightness, 0.5) * np.power(1.64-0.29**n, 0.73)
     hue = ...
     pass
 #%%
