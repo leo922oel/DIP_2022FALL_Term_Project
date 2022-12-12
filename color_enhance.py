@@ -2,128 +2,277 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from PIL import Image
+# from ciecam02 import xyz2cam02, rgb2jch, rgb2xyz, jch2rgb
 #%%
-def Gamma_correction(input, gamma):
+M_f = np.array([[95.57, 64.67, 33.01],
+            [49.49, 137.29, 14.76],
+            [0.44, 27.21, 169.83]])
+M_l = np.array([[4.61, 3.35, 1.78],
+            [2.48, 7.16, 0.79],
+            [0.28, 1.93, 8.93]])
+M_cat02 = np.array([
+    [0.7328, 0.4296, -0.1624],
+    [-0.7036, 1.6975, 0.0061],
+    [0.003, 0.0136, 0.9834]
+])
+M_h = np.array([
+    [0.38971, 0.68898, -0.07868],
+    [-0.22981, 1.18340, 0.04641],
+    [0., 0., 1.]
+])
+
+def Gamma_correction(input, light_type):
     if (input > 1.).any(): 
         raise ValueError("Input Does Not Normalize")
-    return np.power(input, 1/gamma)
+    if light_type == "full-backlight":
+        gamma = np.array([2.4767, 2.4286, 2.3792])
+    elif light_type == "low-backlight":
+        gamma = np.array([2.2212, 2.1044, 2.1835])
+    else:
+        raise TypeError("Image Type is Neither 'full-backlight' or 'low-backlight'")
 
-def DCM(R, G, B, type="full-backlight"):
-    if type == "full-backlight":
-        M = np.array([
-            [95.57, 64.67, 33.01],
-            [49.49, 137.29, 14.76],
-            [0.44, 27.21, 169.83]
-        ])
-    elif type == "low-backlight":
-        M = np.array([
-            [4.61, 3.35, 1.78],
-            [2.48, 7.16, 0.79],
-            [0.28, 1.93, 8.93]
-        ])
+    return np.power(input, 1/ gamma)
+
+def xyz2rgb(xyz, light_type="low-backlight"):
+    if light_type == "full-backlight":
+        M_inv = np.linalg.inv(M_f)
+    elif light_type == "low-backlight":
+        M_inv = np.linalg.inv(M_l)
+    else:
+        raise NameError("Type Name Neither 'full-backlight' or 'low-backloght'")
+
+    M_inv = np.array([[3.2406, -1.5372, -0.4986],
+                    [-0.9689, 1.8758,  0.0415],
+                    [0.0557, -0.2040,  1.0570]])
+    xyz = xyz/100.0
+    RGB = xyz.dot(M_inv.T)
+    RGB = np.where(RGB <= 0, 0.00000001, RGB)
+    RGB = np.where(RGB > 0.0031308,
+                   1.055*(RGB**0.4166666)-0.055,
+                   12.92*RGB)
+
+    # RGB = np.where(RGB < 0, 1e-8, RGB)
+    # RGB = Gamma_correction(RGB, light_type)
+    RGB = np.where(RGB <= 0, 0, RGB)
+    RGB = np.where(RGB > 1, 1, RGB)
+    RGB = np.around(RGB*255)
+    RGB = RGB.astype('uint8')
+
+    return RGB
+
+def rgb2xyz(rgb, light_type="full-backlight"):
+    if light_type == "full-backlight":
+        M = M_f
+    elif light_type == "low-backlight":
+        M = M_l
     else:
         raise NameError("Type Name Neither 'full-backlight' or 'low-backloght'")
     
-    X = R*M[0, 0] + G*M[0, 1] + B*M[0, 2]
-    Y = R*M[1, 0] + G*M[1, 1] + B*M[1, 2]
-    Z = R*M[2, 0] + G*M[2, 1] + B*M[2, 2]
-    return X, Y, Z
+    # rgb = Gamma_correction(rgb, light_type)
+    rgb = np.where(rgb > 0.04045, np.power(((rgb+0.055)/1.055), 2.4),
+                     rgb/12.92)
+    xyz = rgb.dot(M.T)
+    return xyz
 
-def CIECAM(X, Y, Z, surround="avg"):
-    if surround == "avg":
-        c = 0.69
-        N = 1.0
-        F = 1.0
-    elif surround == "dim":
-        c = 0.59
-        N = 0.9
-        F = 0.9
-    elif surround == "dark":
-        c = 0.525
-        N = 0.8
-        F = 0.8
-    else:
-        raise NameError("Surround Neither 'avg' or 'dim' or 'dark'")
+whitepoint = {'white': [193.25, 201.54, 197.48],
+              'c': [109.85, 100.0, 35.58]}
+env = {'dim': [0.9, 0.59, 0.9],
+       'average': [1.0, 0.69, 1.0],
+       'dark': [0.8, 0.525, 0.8]}
+lightindensity = {'default': 60.0, 'high': 318.31, 'low': 31.83}
+bgindensity = {'default': 25.0, 'high': 20.0, 'low': 10.0}
 
-    white = np.ones(X.shape)
-    R_w = Gamma_correction(white, 2.4767)
-    G_w = Gamma_correction(white, 2.4286)
-    B_w = Gamma_correction(white, 2.3792)
-    X_w, Y_w, Z_w = DCM(R_w, G_w, B_w, type="full-backlight")
-    L_a = 60
-    Y_b = 25
-    M_cat = np.array([
-        [0.7328, 0.4296, -0.1624],
-        [-0.7036, 1.6975, 0.0061],
-        [0.003, 0.0136, 0.9834]
-    ])
+currentwhite = whitepoint['white']
+currentenv = env['average']
+currentlight = lightindensity['default']
+currentbg = bgindensity['default']
 
+def setconfig(wp='white', e='average', li='default', bgi='default'):
+    currentwhite = whitepoint[wp]
+    currentenv = env[e]
+    currentlight = lightindensity[li]
+    currentbg = bgindensity[bgi]
+
+# Xw, Yw, Zw = currentwhite
+Xw, Yw, Zw = rgb2xyz(np.array([1., 1., 1.]), "full-backlight")
+Nc, c, F = currentenv
+LA = currentlight
+Yb = currentbg
+Lw, Mw, Sw = M_cat02.dot(np.array([Xw, Yw, Zw]))
+D = F*(1 - (1/3.6)*np.exp(-(LA+42)/92))
+if D > 1: D = 1
+elif D < 0: D = 0
+
+Dl, Dm, Ds = [100*D/Lw+1-D, 100*D/Mw+1-D, 100*D/Sw+1-D]
+Lw_c, Mw_c, Sw_c = [Dl*Lw, Dm*Mw, Ds*Sw]
+k = 1 / (5*LA + 1)
+F_l = 0.2 * np.power(k, 4) * (5*LA) + 0.1 * np.power(1 - k ** 4, 2) * np.power(5*LA, 1/3)
+n = Yb/Yw
+if n > 1: n = 1
+elif n < 0: n = 1e-6
+
+Nbb = Ncb= 0.725 * np.power(1/n, 0.2)
+z = 1.48 + n ** 0.5
+
+Lw_, Mw_, Sw_ = M_h.dot(np.linalg.inv(M_cat02).dot([Lw_c, Mw_c, Sw_c]))
+
+Lwa_ = (400 * ((F_l*Lw_/100)**0.42))/(27.13+((F_l*Lw_/100)**0.42))+0.1
+Mwa_ = (400 * ((F_l*Mw_/100)**0.42))/(27.13+((F_l*Mw_/100)**0.42))+0.1
+Swa_ = (400 * ((F_l*Sw_/100)**0.42))/(27.13+((F_l*Sw_/100)**0.42))+0.1
+Aw = Nbb * (2*Lwa_+Mwa_+(Swa_/20) - 0.305)
+
+colordata = [
+    [20.14, 0.8, 0],
+    [90, 0.7, 100],
+    [164.25, 1.0, 200],
+    [237.53, 1.2, 300],
+    [380.14, 0.8, 400]
+]
+
+def xyz2cam02(xyz):
     # step2
-    L = X*M_cat[0, 0] + Y*M_cat[0, 1] + Z*M_cat[0, 2]
-    M = X*M_cat[1, 0] + Y*M_cat[1, 1] + Z*M_cat[1, 2]
-    S = X*M_cat[2, 0] + Y*M_cat[2, 1] + Z*M_cat[2, 2]
-    L_w = X_w*M_cat[0, 0] + Y_w*M_cat[0, 1] + Z_w*M_cat[0, 2]
-    M_w = X_w*M_cat[1, 0] + Y_w*M_cat[1, 1] + Z_w*M_cat[1, 2]
-    S_w = X_w*M_cat[2, 0] + Y_w*M_cat[2, 1] + Z_w*M_cat[2, 2]
-
-    D = F*(1 - (1/3.6)*np.exp(-(L_a+42)/92))
-    L_c = ((100/L_w)*D + 1 - D) * L
-    M_c = ((100/M_w)*D + 1 - D) * M
-    S_c = ((100/S_w)*D + 1 - D) * S
+    LMS = xyz.dot(M_cat02.T)
+    LMS_c = LMS * np.array([Dl, Dm, Ds])
 
     # step3
-    k = 1 / (5*L_a + 1)
-    F_l = 0.2 * np.power(k, 4) * (5*L_a) + 0.1 * np.power(1 - k ** 4, 2) * np.power(5*L_a, 1/3)
-    M_h = np.array([
-        [0.38971, 0.68898, -0.07868],
-        [-0.22981, 1.18340, 0.04641],
-        [0., 0., 1.]
-    ])
-    X_c = L_c*np.linalg.inv(M_cat)[0, 0] + M_c*np.linalg.inv(M_cat)[0, 1] + S_c*np.linalg.inv(M_cat)[0, 2]
-    Y_c = L_c*np.linalg.inv(M_cat)[1, 0] + M_c*np.linalg.inv(M_cat)[1, 1] + S_c*np.linalg.inv(M_cat)[1, 2]
-    Z_c = L_c*np.linalg.inv(M_cat)[2, 0] + M_c*np.linalg.inv(M_cat)[2, 1] + S_c*np.linalg.inv(M_cat)[2, 2]
-    L_ = X_c*M_h[0, 0] + Y_c*M_h[0, 1] + Z_c*M_h[0, 2]
-    M_ = X_c*M_h[1, 0] + Y_c*M_h[1, 1] + Z_c*M_h[1, 2]
-    S_ = X_c*M_h[2, 0] + Y_c*M_h[2, 1] + Z_c*M_h[2, 2]
-
-    La_ = (400*np.power(F_l*L_/100, 0.42)) / (27.13+np.power(F_l*L_/100, 0.42)) + 0.1
-    Ma_ = (400*np.power(F_l*M_/100, 0.42)) / (27.13+np.power(F_l*M_/100, 0.42)) + 0.1
-    Sa_ = (400*np.power(F_l*S_/100, 0.42)) / (27.13+np.power(F_l*S_/100, 0.42)) + 0.1
+    LMS_ = LMS_c.dot(np.linalg.inv(M_cat02).T).dot(M_h.T)
+    LMSa_ = (400*np.power(F_l*LMS_/100, 0.42)) / (27.13+np.power(F_l*LMS_/100, 0.42)) + 0.1
 
     # step4
-    n = Y_b/Y_c
-    N_bb = 0.725 * np.power(1/n, 0.2)
-    C1 = La_ - Ma_
-    C2 = Ma_ - Sa_
-    C3 = Sa_ - La_
+    C1 = LMSa_[:, 0] - LMSa_[:, 1]
+    C2 = LMSa_[:, 1] - LMSa_[:, 2]
+    C3 = LMSa_[:, 2] - LMSa_[:, 1]
 
-    A = (2*La_ + Ma_ + 1/20*Sa_ - 0.305) * N_bb
+    A = (2*LMSa_[:, 0] + LMSa_[:, 1] + 1/20*LMSa_[:, 2] - 0.305) * Nbb
     a = C1 - 1/11*C2
     b = (C2-C3) / 9
 
     # step5
-    z = 1.48 + n ** 0.5
+    h = np.arctan2(b, a)
+    h = np.where(h < 0, (h+np.pi*2)*180/np.pi, h*180/np.pi)
+    huue = np.where(h < colordata[0][0], h+360, h)
+    etemp = (np.cos(huue*np.pi/180+2)+3.8) * 0.25
+    coarray = np.array([20.14, 90, 164.25, 237.53, 380.14])
+    position_ = coarray.searchsorted(huue)
 
-    lightness = 100 * np.power(A/A_w, c*z)
-    chroma = np.power(t, 0.9) * np.power(1/100*lightness, 0.5) * np.power(1.64-0.29**n, 0.73)
-    hue = ...
-    pass
+    def TransferHue(h_, i):
+        datai = colordata[i-1]
+        datai1 = colordata[i]
+        Hue = datai[2] + ((100*(h_-datai[0])/datai[1]) /
+                          (((h_-datai[0])/datai[1])+(datai1[0]-h_)/datai1[1]))
+        return Hue
+
+    ufunc_TransferHue = np.frompyfunc(TransferHue, 2, 1)
+    H = ufunc_TransferHue(huue, position_).astype('float')
+    J = 100*((A/Aw)**(c*z))
+    Q = (4/c) * ((J/100.0)**0.5) * (Aw + 4) * (F_l**0.25)
+    # step 12
+    t = ((50000/13.0)*Nc*Nbb*etemp*((a**2+b**2)**0.5)) / (LMSa_[:, 0]+LMSa_[:, 1]+(21/20.0)*LMSa_[:, 2])
+    C = t**0.9*((J/100.0)**0.5)*((1.64-(0.29**n))**0.73)
+    M = C*(F_l**0.25)
+    s = 100*((M/Q)**0.5)
+    return np.array([h, H, J, Q, C, M, s]).T
+
+def jch2xyz(jch):
+    JCH = jch*np.array([1.0, 1.0, 10/9.0])
+    J = JCH[:, 0]
+    C = JCH[:, 1]
+    H = JCH[:, 2]
+    coarray = np.array([0.0, 100.0, 200.0, 300.0, 400.0])
+    position_ = coarray.searchsorted(H)
+
+    def TransferHue(H_, i):
+        C1 = colordata[i-1]
+        C2 = colordata[i]
+        h = ((H_-C1[2])*(C2[1]*C1[0]-C1[1]*C2[0])-100*C1[0]*C2[1]) /\
+            ((H_-C1[2])*(C2[1]-C1[1]) - 100*colordata[i][1])
+        if h > 360:
+            h -= 360
+        return h
+    ufunc_TransferHue = np.frompyfunc(TransferHue, 2, 1)
+    h_ = ufunc_TransferHue(JCH[:, 2], position_).astype('float')
+    J = np.where(J <= 0, 0.00001, J)
+    C = np.where(C <= 0, 0.00001, C)
+    t = (C/(((J/100.0)**0.5)*((1.64-(0.29**n))**0.73)))**(1/0.9)
+    t = np.where(t - 0 < 0.00001, 0.00001, t)
+    etemp = (np.cos(h_*np.pi/180+2)+3.8) * 0.25
+    e = (50000/13.0) * Nc * Nbb * etemp
+    A = Aw*((J/100)**(1/(c*z)))
+
+    pp2 = A/Nbb + 0.305
+    p3 = 21/20.0
+    hue = h_*np.pi/180
+    pp1 = e/t
+
+    def evalAB(h, p1, p2):
+        if abs(np.sin(h)) >= abs(np.cos(h)):
+            p4 = p1/np.sin(h)
+            b = (p2*(2+p3)*(460.0/1403)) /\
+                (p4+(2+p3)*(220.0/1403)*(np.cos(h)/np.sin(h))-27.0/1403 +
+                 p3*(6300.0/1403))
+            a = b*(np.cos(h)/np.sin(h))
+        else:  # abs(np.cos(h))>abs(np.sin(h)):
+            p5 = p1/np.cos(h)
+            a = (p2*(2+p3)*(460.0/1403)) /\
+                (p5+(2+p3)*(220.0/1403) -
+                 (27.0/1403 - p3*(6300.0/1403))*(np.sin(h)/np.cos(h)))
+            b = a*(np.sin(h)/np.cos(h))
+        return np.array([a, b])
+    ufunc_evalAB = np.frompyfunc(evalAB, 3, 1)
+    abinter = np.row_stack(ufunc_evalAB(hue, pp1, pp2))
+    a = abinter[:, 0]
+    b = abinter[:, 1]
+
+    Ra_ = (460*pp2 + 451*a + 288*b)/1403.0
+    Ga_ = (460*pp2 - 891*a - 261*b)/1403.0
+    Ba_ = (460*pp2 - 220*a - 6300*b)/1403.0
+    R_ = np.sign(Ra_-0.1)*(100.0/F_l) *\
+        (((27.13*np.abs(Ra_-0.1))/(400-np.abs(Ra_-0.1)))**(1/0.42))
+    G_ = np.sign(Ga_-0.1)*(100.0/F_l) *\
+        (((27.13*np.abs(Ga_-0.1))/(400-np.abs(Ga_-0.1)))**(1/0.42))
+    B_ = np.sign(Ba_-0.1)*(100.0/F_l) *\
+        (((27.13*np.abs(Ba_-0.1))/(400-np.abs(Ba_-0.1)))**(1/0.42))
+
+    RcGcBc = (np.array([R_, G_, B_]).T).dot(np.linalg.inv(M_h).T).dot(M_cat02.T)
+    RGB = RcGcBc/np.array([Dl, Dm, Ds])
+    XYZ = RGB.dot(np.linalg.inv(M_cat02).T)
+    return XYZ
+
+def rgb2jch(color, light_type="full-backlight"):
+    XYZ = rgb2xyz(color, light_type)
+    value = xyz2cam02(XYZ)
+    return value[:, [2, 4, 1]]*np.array([1.0, 1.0, 0.9])
+
+def jch2rgb(jch, light_type="low-backlight"):
+    xyz = jch2xyz(jch)
+    return xyz2rgb(xyz, light_type)
+
+def clipped(jch, rgb_c, rgb_i):
+    J = np.array([jch[:, 0]]).T
+    C = np.array([jch[:, 1]]).T
+    print((J*C).shape)
+    print(rgb_c.shape)
+    RGB = (1 - J*C)*(rgb_c/255.) + (J*C)*(rgb_i)
+
+    # RGB = np.where(RGB <= 0, 0, RGB)
+    # RGB = np.where(RGB > 1, 1, RGB)
+    RGB = np.around(RGB*255)
+    RGB = RGB.astype('uint8')
+    return RGB
+
 #%%
-ori_img = cv2.imread("image_ref/04_original.png")
-norm_img = ori_img / 255.
-R = norm_img[:, :, 0]
-G = norm_img[:, :, 1]
-B = norm_img[:, :, 2]
-
-# full-backlight
-Gamma_r = Gamma_correction(R, 2.4767)
-Gamma_g = Gamma_correction(G, 2.4286)
-Gamma_b = Gamma_correction(B, 2.3792)
-
-DCM(Gamma_r, Gamma_g, Gamma_b, "full-backlight")
-
-#%%
-# cv2.imshow('My Image', ori_img)
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
-#%%
+im = Image.open("image_ref/04_original.png")
+rgb = np.array(im)
+rgb = rgb / 255.
+shape = rgb.shape
+jch = rgb2jch(rgb.reshape(-1, 3), "full-backlight")
+print(jch.shape)
+enhanced_rgb = jch2rgb(jch, "low-backlight").reshape(shape)
+im = Image.fromarray(enhanced_rgb)
+im.show()
+# %%
+clip = clipped(jch, enhanced_rgb.reshape(-1, 3), rgb.reshape(-1, 3)).reshape(shape)
+im = Image.fromarray(clip)
+im.show()
+# %%
