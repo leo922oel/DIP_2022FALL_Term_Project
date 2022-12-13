@@ -250,10 +250,8 @@ def jch2rgb(jch, light_type="low-backlight"):
     return xyz2rgb(xyz, light_type)
 
 def clipped(jch, rgb_c, rgb_i):
-    J = np.array([jch[:, 0]]).T
-    C = np.array([jch[:, 1]]).T
-    print((J*C).shape)
-    print(rgb_c.shape)
+    J = np.array([jch[:, 0]]).T / 100
+    C = np.array([jch[:, 1]]).T / 100
     RGB = (1 - J*C)*(rgb_c/255.) + (J*C)*(rgb_i)
 
     RGB = np.where(RGB <= 0, 0, RGB)
@@ -268,9 +266,9 @@ im.show()
 rgb = np.array(im)
 rgb = rgb / 255.
 shape = rgb.shape
-jch = rgb2jch(rgb.reshape(-1, 3), "low-backlight")
+jch = rgb2jch(rgb.reshape(-1, 3), "full-backlight")
 print(jch.shape)
-enhanced_rgb = jch2rgb(jch, "full-backlight").reshape(shape)
+enhanced_rgb = jch2rgb(jch, "low-backlight").reshape(shape)
 im = Image.fromarray(enhanced_rgb)
 im.show()
 # %%
