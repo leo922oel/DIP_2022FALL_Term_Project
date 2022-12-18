@@ -8,6 +8,9 @@ from skimage import img_as_ubyte
 from skimage.color import rgb2gray
 from skimage.exposure import histogram, cumulative_distribution
 from scipy.stats import cauchy, logistic
+
+from argparse import ArgumentParser, Namespace
+from pathlib import Path
 #%%
 M_f = np.array([[95.57, 64.67, 33.01],
             [49.49, 137.29, 14.76],
@@ -34,26 +37,22 @@ def individual_channel(image, dist, channel):
     new_vals = np.interp(freq, dist.cdf(np.arange(0,256)), 
                                np.arange(0,256))
     return new_vals[im_channel].astype(np.uint8)
-    # return new_vals[im_channel]
 
 def Histogram_Correction(image, function, mean, std, output="value"):
     ycrcb = cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
     dist = function(mean, std)
-    # red = individual_channel(image, dist, 0)
-    # green = individual_channel(image, dist, 1)
-    # blue = individual_channel(image, dist, 2)
     ycrcb[:,:,0] = individual_channel(ycrcb, dist, 0)/255.
+    rgb = cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2RGB)
+    rgb = np.where(rgb > 1, 1, rgb)
+    rgb = np.where(rgb < 0, 0, rgb)
 
     if output=="value":
         # return np.dstack((red, green, blue))
-        rgb = cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2RGB)
-        rgb = np.where(rgb > 1, 1, rgb)
-        rgb = np.where(rgb < 0, 0, rgb)
         return rgb
 
     elif output=="plot":
         image_intensity = img_as_ubyte(rgb2gray(image))
-        fig, ax = plt.subplots(1,3, figsize=(8,5))
+        fig, ax = plt.subplots(1,3, figsize=(12,5))
         freq, bins = cumulative_distribution(image_intensity)
         ax[0].step(bins, freq, c='b', label='Actual CDF')
         # new_vals = np.interp(freq, dist.cdf(np.arange(0,256)), 
@@ -70,7 +69,7 @@ def Histogram_Correction(image, function, mean, std, output="value"):
         ax[1].set_title('original Image')
         ax[1].set_xticks([])
         ax[1].set_yticks([])
-        ax[2].imshow(np.dstack((red, green, blue)))
+        ax[2].imshow(rgb)
         ax[2].set_title('Transformed Image')
         ax[2].set_xticks([])
         ax[2].set_yticks([])
@@ -98,15 +97,8 @@ def xyz2rgb(xyz, light_type="low-backlight"):
     else:
         raise NameError("Type Name Neither 'full-backlight' or 'low-backloght'")
 
-    # M_inv = np.array([[3.2406, -1.5372, -0.4986],
-                    # [-0.9689, 1.8758,  0.0415],
-                    # [0.0557, -0.2040,  1.0570]])
     # xyz = xyz/100.0
     RGB = xyz.dot(M_inv.T)
-    # RGB = np.where(RGB <= 0, 0.00000001, RGB)
-    # RGB = np.where(RGB > 0.0031308,
-                #    1.055*(RGB**0.4166666)-0.055,
-                #    12.92*RGB)
 
     # RGB = RGB / 255.
     RGB = np.where(RGB < 0, 0, RGB)
@@ -127,8 +119,6 @@ def rgb2xyz(rgb, light_type="full-backlight"):
         raise NameError("Type Name Neither 'full-backlight' or 'low-backloght'")
     
     rgb = Gamma_correction(rgb, light_type)
-    # rgb = np.where(rgb > 0.04045, np.power(((rgb+0.055)/1.055), 2.4),
-                    #  rgb/12.92)
     xyz = rgb.dot(M.T)
     return xyz
 
@@ -354,14 +344,51 @@ def clipped(jch, rgb_c, rgb_i):
     RGB = RGB.astype('uint8')
     return RGB
 
+def main(args):
+    ori_img = plt.imread(args.img)
+    display = None
+
+    img = ori_img
+    if args.use_HC:
+        hist_img = Histogram_Correction(ori_img, logistic, args.mean, args.std, "value")
+        # display = hist_img
+        display = Image.fromarray(np.round(hist_img*255).astype("uint8"))
+        img = hist_img
+    if args.sim_dim:
+        rgb = np.array(img)
+        # rgb = rgb / 255.
+        shape = rgb.shape
+        dim_rgb = xyz2rgb(rgb2xyz(rgb, "low-backlight"), "full-backlight")
+        display = Image.fromarray(dim_rgb)
+        img = dim_rgb / 255.
+    if args.use_CE:
+        rgb = np.array(img)
+        # rgb = rgb / 255.
+        shape = rgb.shape
+        jch = rgb2jch(rgb.reshape(-1, 3), "full-backlight")
+        enhanced_rgb = jch2rgb(jch, "low-backlight").reshape(shape)
+        clip = clipped(jch, enhanced_rgb.reshape(-1, 3), rgb.reshape(-1, 3)).reshape(shape)
+        display = Image.fromarray(clip)
+    if args.verbosity:
+        # fig, ax = plt.subplots(1,1, figsize=(8,5))
+        # ax.imshow(display)
+        # ax.set_title('Result Image')
+        # ax.set_xticks([])
+        # ax.set_yticks([])
+        display.show()
+    if args.save:
+        display.save(f"{args.output_name}.png")
+        # plt.savefig(clip, args.output_name)
+"""
 #%%
-file = "image_ref/01_backlight.png"
+file = "image_ref/18_original.png"
 # ori_img = Image.open(file)
-imageObj = plt.imread(file)
-hist_img = Histogram_Correction(imageObj, logistic, 135, 35, "value")
+ori_img = plt.imread(file)
+hist_img = Histogram_Correction(ori_img, logistic, 90, 80, "value")
 # plt.imshow(hist_img)
+# img = ori_img
 img = hist_img
-# img = hist_img
+
 #%%
 rgb = np.array(img)
 # rgb = rgb / 255.
@@ -369,16 +396,6 @@ shape = rgb.shape
 dim_rgb = xyz2rgb(rgb2xyz(rgb, "low-backlight"), "full-backlight")
 dim_img = Image.fromarray(dim_rgb)
 # dim_img.show()
-
-fig, ax = plt.subplots(1,2, figsize=(8,5))
-ax[0].imshow(imageObj)
-ax[0].set_title('Original Image')
-ax[0].set_xticks([])
-ax[0].set_yticks([])
-ax[1].imshow(hist_img)
-ax[1].set_title('H+C Image')
-ax[1].set_xticks([])
-ax[1].set_yticks([])
 #%%
 rgb = np.array(img)
 # rgb = rgb / 255.
@@ -388,15 +405,6 @@ clip = clipped(jch, enhanced_rgb.reshape(-1, 3), rgb.reshape(-1, 3)).reshape(sha
 enhanced_img = Image.fromarray(clip)
 # enhanced_img.show()
 
-fig, ax = plt.subplots(1,2, figsize=(8,5))
-ax[0].imshow(img)
-ax[0].set_title('Original Image')
-ax[0].set_xticks([])
-ax[0].set_yticks([])
-ax[1].imshow(enhanced_img)
-ax[1].set_title('Enhanced Image')
-ax[1].set_xticks([])
-ax[1].set_yticks([])
 #%%
 rgb = dim_rgb
 rgb = rgb / 255.
@@ -407,13 +415,67 @@ clip = clipped(jch, enhanced_rgb.reshape(-1, 3), rgb.reshape(-1, 3)).reshape(sha
 enhanced_img = Image.fromarray(clip)
 # enhanced_img.show()
 
-fig, ax = plt.subplots(1,2, figsize=(8,5))
-ax[0].imshow(dim_img)
-ax[0].set_title('Dim Image')
-ax[0].set_xticks([])
-ax[0].set_yticks([])
-ax[1].imshow(enhanced_img)
-ax[1].set_title('Enhanced Image')
-ax[1].set_xticks([])
-ax[1].set_yticks([])
-# %%
+"""
+
+def parse_args() -> Namespace:
+    parser = ArgumentParser()
+    parser.add_argument(
+        "--img",
+        type=Path,
+        help="path to the original image.",
+        required=True,
+    )
+    parser.add_argument(
+        "--use_HC",
+        type=bool,
+        help="Whether use Histogram Correction or not.",
+        default=False,
+    )
+    parser.add_argument(
+        "--mean",
+        type=int,
+        help="Mean for Histogram Correction.",
+        default=130,
+    )
+    parser.add_argument(
+        "--std",
+        type=int,
+        help="Standard deviation for Histogram Correction.",
+        default=40,
+    )
+    parser.add_argument(
+        "--sim_dim",
+        type=bool,
+        help="Whether simulate image with dim backlight or not.",
+        default=False,
+    )
+    parser.add_argument(
+        "--use_CE",
+        type=bool,
+        help="Whether use Color Enhancement or not.",
+        default=False,
+    )
+    parser.add_argument(
+        "--verbosity",
+        type=bool,
+        help="Whether show the result.",
+        default=True,
+    )
+    parser.add_argument(
+        "--save",
+        type=bool,
+        help="Whether save the result.",
+        default=False,
+    )
+    parser.add_argument(
+        "--output_name",
+        type=str,
+        help="Name of output image",
+        default="Result",
+    )
+    args = parser.parse_args()
+    return args
+
+if __name__ == "__main__":
+    args = parse_args()
+    main(args)
