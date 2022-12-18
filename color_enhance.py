@@ -33,23 +33,26 @@ def individual_channel(image, dist, channel):
     freq = np.pad(freq, (0, 256-len(freq)), 'maximum')
     new_vals = np.interp(freq, dist.cdf(np.arange(0,256)), 
                                np.arange(0,256))
-    # return new_vals[im_channel].astype(np.uint8)
-    return new_vals[im_channel]
+    return new_vals[im_channel].astype(np.uint8)
+    # return new_vals[im_channel]
 
 def Histogram_Correction(image, function, mean, std, output="value"):
     ycrcb = cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
     dist = function(mean, std)
-    image_intensity = img_as_ubyte(rgb2gray(image))
     # red = individual_channel(image, dist, 0)
     # green = individual_channel(image, dist, 1)
     # blue = individual_channel(image, dist, 2)
-    ycrcb[:,:,0] = individual_channel(ycrcb, dist, 0) / 255.
+    ycrcb[:,:,0] = individual_channel(ycrcb, dist, 0)/255.
 
     if output=="value":
         # return np.dstack((red, green, blue))
-        return cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2RGB)
+        rgb = cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2RGB)
+        rgb = np.where(rgb > 1, 1, rgb)
+        rgb = np.where(rgb < 0, 0, rgb)
+        return rgb
 
     elif output=="plot":
+        image_intensity = img_as_ubyte(rgb2gray(image))
         fig, ax = plt.subplots(1,3, figsize=(8,5))
         freq, bins = cumulative_distribution(image_intensity)
         ax[0].step(bins, freq, c='b', label='Actual CDF')
@@ -352,25 +355,33 @@ def clipped(jch, rgb_c, rgb_i):
     return RGB
 
 #%%
-file = "image_ref/04_original.png"
-ori_img = Image.open(file)
+file = "image_ref/01_backlight.png"
+# ori_img = Image.open(file)
 imageObj = plt.imread(file)
-head = "04"
-# Histogram_Correction(imageObj, logistic, 120, 40, "plot")
 hist_img = Histogram_Correction(imageObj, logistic, 135, 35, "value")
 # plt.imshow(hist_img)
-img = ori_img
+img = hist_img
 # img = hist_img
 #%%
 rgb = np.array(img)
-rgb = rgb / 255.
+# rgb = rgb / 255.
 shape = rgb.shape
 dim_rgb = xyz2rgb(rgb2xyz(rgb, "low-backlight"), "full-backlight")
 dim_img = Image.fromarray(dim_rgb)
 # dim_img.show()
+
+fig, ax = plt.subplots(1,2, figsize=(8,5))
+ax[0].imshow(imageObj)
+ax[0].set_title('Original Image')
+ax[0].set_xticks([])
+ax[0].set_yticks([])
+ax[1].imshow(hist_img)
+ax[1].set_title('H+C Image')
+ax[1].set_xticks([])
+ax[1].set_yticks([])
 #%%
 rgb = np.array(img)
-rgb = rgb / 255.
+# rgb = rgb / 255.
 jch = rgb2jch(rgb.reshape(-1, 3), "full-backlight")
 enhanced_rgb = jch2rgb(jch, "low-backlight").reshape(shape)
 clip = clipped(jch, enhanced_rgb.reshape(-1, 3), rgb.reshape(-1, 3)).reshape(shape)
@@ -397,16 +408,12 @@ enhanced_img = Image.fromarray(clip)
 # enhanced_img.show()
 
 fig, ax = plt.subplots(1,2, figsize=(8,5))
-# ax[0].imshow(dim_img)
-ax[0].imshow(imageObj)
-# ax[0].set_title('Dim Image')
+ax[0].imshow(dim_img)
+ax[0].set_title('Dim Image')
 ax[0].set_xticks([])
 ax[0].set_yticks([])
-# ax[1].imshow(enhanced_img)
-ax[1].imshow(hist_img)
-# ax[1].set_title('Enhanced Image')
+ax[1].imshow(enhanced_img)
+ax[1].set_title('Enhanced Image')
 ax[1].set_xticks([])
 ax[1].set_yticks([])
-# %%
-Histogram_Correction(clip, logistic, 120, 40, "plot")
 # %%
