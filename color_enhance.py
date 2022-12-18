@@ -3,7 +3,11 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-# from ciecam02 import xyz2cam02, rgb2jch, rgb2xyz, jch2rgb
+from skimage.io import imread, imshow
+from skimage import img_as_ubyte
+from skimage.color import rgb2gray
+from skimage.exposure import histogram, cumulative_distribution
+from scipy.stats import cauchy, logistic
 #%%
 M_f = np.array([[95.57, 64.67, 33.01],
             [49.49, 137.29, 14.76],
@@ -22,9 +26,47 @@ M_h = np.array([
     [0., 0., 1.]
 ])
 
-def Gamma_correction(input, light_type):
-    if (input > 1.).any(): 
-        raise ValueError("Input Does Not Normalize")
+def individual_channel(image, dist, channel):
+    im_channel = img_as_ubyte(image[:,:,channel])
+    freq, bins = cumulative_distribution(im_channel)
+    new_vals = np.interp(freq, dist.cdf(np.arange(0,256)), 
+                               np.arange(0,256))
+    return new_vals[im_channel].astype(np.uint8)
+
+def distribution(image, function, mean, std, output="value"):
+    dist = function(mean, std)
+    image_intensity = img_as_ubyte(rgb2gray(image))
+    red = individual_channel(image, dist, 0)
+    green = individual_channel(image, dist, 1)
+    blue = individual_channel(image, dist, 2)
+
+    if output=="value":
+        return np.dstack((red, green, blue))
+
+    elif output=="plot":
+        fig, ax = plt.subplots(1,3, figsize=(8,5))
+        freq, bins = cumulative_distribution(image_intensity)
+        ax[0].step(bins, freq, c='b', label='Actual CDF')
+        ax[0].plot(dist.cdf(np.arange(0,256)), 
+                   c='r', label='Target CDF')
+        ax[0].legend()
+        ax[0].set_title('Actual vs. Target Cumulative Distribution')
+
+        ax[1].imshow(image)
+        ax[1].set_title('original Image')
+        ax[1].set_xticks([])
+        ax[1].set_yticks([])
+        ax[2].imshow(np.dstack((red, green, blue)))
+        ax[2].set_title('Transformed Image')
+        ax[2].set_xticks([])
+        ax[2].set_yticks([])
+        plt.show()
+    else:
+        raise NameError("Output Type Neither 'value' or 'plot'")
+
+def Gamma_correction(input, light_type, mapping=False):
+    # if (input > 1.).any(): 
+        # raise ValueError("Input Does Not Normalize")
     if light_type == "full-backlight":
         gamma = np.array([2.4767, 2.4286, 2.3792])
     elif light_type == "low-backlight":
@@ -32,7 +74,7 @@ def Gamma_correction(input, light_type):
     else:
         raise TypeError("Image Type is Neither 'full-backlight' or 'low-backlight'")
 
-    return np.power(input, 1/ gamma)
+    return np.power(input, 1/gamma) if mapping else np.power(input, gamma)
 
 def xyz2rgb(xyz, light_type="low-backlight"):
     if light_type == "full-backlight":
@@ -42,22 +84,23 @@ def xyz2rgb(xyz, light_type="low-backlight"):
     else:
         raise NameError("Type Name Neither 'full-backlight' or 'low-backloght'")
 
-    M_inv = np.array([[3.2406, -1.5372, -0.4986],
-                    [-0.9689, 1.8758,  0.0415],
-                    [0.0557, -0.2040,  1.0570]])
-    xyz = xyz/100.0
+    # M_inv = np.array([[3.2406, -1.5372, -0.4986],
+                    # [-0.9689, 1.8758,  0.0415],
+                    # [0.0557, -0.2040,  1.0570]])
+    # xyz = xyz/100.0
     RGB = xyz.dot(M_inv.T)
-    RGB = np.where(RGB <= 0, 0.00000001, RGB)
-    RGB = np.where(RGB > 0.0031308,
-                   1.055*(RGB**0.4166666)-0.055,
-                   12.92*RGB)
+    # RGB = np.where(RGB <= 0, 0.00000001, RGB)
+    # RGB = np.where(RGB > 0.0031308,
+                #    1.055*(RGB**0.4166666)-0.055,
+                #    12.92*RGB)
 
     # RGB = RGB / 255.
-    # RGB = np.where(RGB < 0, 1e-8, RGB)
-    # RGB = Gamma_correction(RGB, light_type)
-    RGB = np.where(RGB <= 0, 0, RGB)
-    RGB = np.where(RGB > 1, 1, RGB)
+    RGB = np.where(RGB < 0, 0, RGB)
+    RGB = Gamma_correction(RGB, light_type, mapping=True)
+    print(RGB)
     RGB = np.around(RGB*255)
+    RGB = np.where(RGB <= 0, 0, RGB)
+    RGB = np.where(RGB > 255, 255, RGB)
     RGB = RGB.astype('uint8')
 
     return RGB
@@ -70,9 +113,9 @@ def rgb2xyz(rgb, light_type="full-backlight"):
     else:
         raise NameError("Type Name Neither 'full-backlight' or 'low-backloght'")
     
-    # rgb = Gamma_correction(rgb, light_type)
-    rgb = np.where(rgb > 0.04045, np.power(((rgb+0.055)/1.055), 2.4),
-                     rgb/12.92)
+    rgb = Gamma_correction(rgb, light_type)
+    # rgb = np.where(rgb > 0.04045, np.power(((rgb+0.055)/1.055), 2.4),
+                    #  rgb/12.92)
     xyz = rgb.dot(M.T)
     return xyz
 
@@ -95,43 +138,43 @@ def setconfig(wp='white', e='average', li='default', bgi='default'):
     currentlight = lightindensity[li]
     currentbg = bgindensity[bgi]
 
-# Xw, Yw, Zw = currentwhite
-Xw, Yw, Zw = rgb2xyz(np.array([1., 1., 1.]), "full-backlight")
-Nc, c, F = currentenv
-LA = currentlight
-Yb = currentbg
-Lw, Mw, Sw = M_cat02.dot(np.array([Xw, Yw, Zw]))
-D = F*(1 - (1/3.6)*np.exp(-(LA+42)/92))
-if D > 1: D = 1
-elif D < 0: D = 0
-
-Dl, Dm, Ds = [100*D/Lw+1-D, 100*D/Mw+1-D, 100*D/Sw+1-D]
-Lw_c, Mw_c, Sw_c = [Dl*Lw, Dm*Mw, Ds*Sw]
-k = 1 / (5*LA + 1)
-F_l = 0.2 * np.power(k, 4) * (5*LA) + 0.1 * np.power(1 - k ** 4, 2) * np.power(5*LA, 1/3)
-n = Yb/Yw
-if n > 1: n = 1
-elif n < 0: n = 1e-6
-
-Nbb = Ncb= 0.725 * np.power(1/n, 0.2)
-z = 1.48 + n ** 0.5
-
-Lw_, Mw_, Sw_ = M_h.dot(np.linalg.inv(M_cat02).dot([Lw_c, Mw_c, Sw_c]))
-
-Lwa_ = (400 * ((F_l*Lw_/100)**0.42))/(27.13+((F_l*Lw_/100)**0.42))+0.1
-Mwa_ = (400 * ((F_l*Mw_/100)**0.42))/(27.13+((F_l*Mw_/100)**0.42))+0.1
-Swa_ = (400 * ((F_l*Sw_/100)**0.42))/(27.13+((F_l*Sw_/100)**0.42))+0.1
-Aw = Nbb * (2*Lwa_+Mwa_+(Swa_/20) - 0.305)
-
-colordata = [
-    [20.14, 0.8, 0],
-    [90, 0.7, 100],
-    [164.25, 1.0, 200],
-    [237.53, 1.2, 300],
-    [380.14, 0.8, 400]
-]
-
 def xyz2cam02(xyz):
+    # Xw, Yw, Zw = currentwhite
+    Xw, Yw, Zw = rgb2xyz(np.array([1., 1., 1.]), "full-backlight")
+    Nc, c, F = currentenv
+    LA = currentlight
+    Yb = currentbg
+    Lw, Mw, Sw = M_cat02.dot(np.array([Xw, Yw, Zw]))
+    D = F*(1 - (1/3.6)*np.exp(-(LA+42)/92))
+    if D > 1: D = 1
+    elif D < 0: D = 0
+
+    Dl, Dm, Ds = [100*D/Lw+1-D, 100*D/Mw+1-D, 100*D/Sw+1-D]
+    Lw_c, Mw_c, Sw_c = [Dl*Lw, Dm*Mw, Ds*Sw]
+    k = 1 / (5*LA + 1)
+    F_l = 0.2 * np.power(k, 4) * (5*LA) + 0.1 * np.power(1 - k ** 4, 2) * np.power(5*LA, 1/3)
+    n = Yb/Yw
+    if n > 1: n = 1
+    elif n < 0: n = 1e-6
+
+    Nbb = Ncb= 0.725 * np.power(1/n, 0.2)
+    z = 1.48 + n ** 0.5
+
+    Lw_, Mw_, Sw_ = M_h.dot(np.linalg.inv(M_cat02).dot([Lw_c, Mw_c, Sw_c]))
+
+    Lwa_ = (400 * ((F_l*Lw_/100)**0.42))/(27.13+((F_l*Lw_/100)**0.42))+0.1
+    Mwa_ = (400 * ((F_l*Mw_/100)**0.42))/(27.13+((F_l*Mw_/100)**0.42))+0.1
+    Swa_ = (400 * ((F_l*Sw_/100)**0.42))/(27.13+((F_l*Sw_/100)**0.42))+0.1
+    Aw = Nbb * (2*Lwa_+Mwa_+(Swa_/20) - 0.305)
+
+    colordata = [
+        [20.14, 0.8, 0],
+        [90, 0.7, 100],
+        [164.25, 1.0, 200],
+        [237.53, 1.2, 300],
+        [380.14, 0.8, 400]
+    ]
+
     # step2
     LMS = xyz.dot(M_cat02.T)
     LMS_c = LMS * np.array([Dl, Dm, Ds])
@@ -176,6 +219,42 @@ def xyz2cam02(xyz):
     return np.array([h, H, J, Q, C, M, s]).T
 
 def jch2xyz(jch):
+    # Xw, Yw, Zw = currentwhite
+    Xw, Yw, Zw = rgb2xyz(np.array([1., 1., 1.]), "low-backlight")
+    Nc, c, F = currentenv
+    LA = currentlight
+    Yb = currentbg
+    Lw, Mw, Sw = M_cat02.dot(np.array([Xw, Yw, Zw]))
+    D = F*(1 - (1/3.6)*np.exp(-(LA+42)/92))
+    if D > 1: D = 1
+    elif D < 0: D = 0
+
+    Dl, Dm, Ds = [100*D/Lw+1-D, 100*D/Mw+1-D, 100*D/Sw+1-D]
+    Lw_c, Mw_c, Sw_c = [Dl*Lw, Dm*Mw, Ds*Sw]
+    k = 1 / (5*LA + 1)
+    F_l = 0.2 * np.power(k, 4) * (5*LA) + 0.1 * np.power(1 - k ** 4, 2) * np.power(5*LA, 1/3)
+    n = Yb/Yw
+    if n > 1: n = 1
+    elif n < 0: n = 1e-6
+
+    Nbb = Ncb= 0.725 * np.power(1/n, 0.2)
+    z = 1.48 + n ** 0.5
+
+    Lw_, Mw_, Sw_ = M_h.dot(np.linalg.inv(M_cat02).dot([Lw_c, Mw_c, Sw_c]))
+
+    Lwa_ = (400 * ((F_l*Lw_/100)**0.42))/(27.13+((F_l*Lw_/100)**0.42))+0.1
+    Mwa_ = (400 * ((F_l*Mw_/100)**0.42))/(27.13+((F_l*Mw_/100)**0.42))+0.1
+    Swa_ = (400 * ((F_l*Sw_/100)**0.42))/(27.13+((F_l*Sw_/100)**0.42))+0.1
+    Aw = Nbb * (2*Lwa_+Mwa_+(Swa_/20) - 0.305)
+
+    colordata = [
+        [20.14, 0.8, 0],
+        [90, 0.7, 100],
+        [164.25, 1.0, 200],
+        [237.53, 1.2, 300],
+        [380.14, 0.8, 400]
+    ]
+
     JCH = jch*np.array([1.0, 1.0, 10/9.0])
     J = JCH[:, 0]
     C = JCH[:, 1]
@@ -250,9 +329,11 @@ def jch2rgb(jch, light_type="low-backlight"):
     return xyz2rgb(xyz, light_type)
 
 def clipped(jch, rgb_c, rgb_i):
-    J = np.array([jch[:, 0]]).T / 100
-    C = np.array([jch[:, 1]]).T / 100
-    RGB = (1 - J*C)*(rgb_c/255.) + (J*C)*(rgb_i)
+    J = np.array([jch[:, 0]]).T
+    C = np.array([jch[:, 1]]).T
+    JC = J*C
+    JC = (JC - JC.min()) / (JC.max()-JC.min())
+    RGB = (1 - JC)*(rgb_c/255.) + (JC)*(rgb_i)
 
     RGB = np.where(RGB <= 0, 0, RGB)
     RGB = np.where(RGB > 1, 1, RGB)
@@ -260,19 +341,36 @@ def clipped(jch, rgb_c, rgb_i):
     RGB = RGB.astype('uint8')
     return RGB
 
+# %%
+# img = Image.open("image_ref/04_original.png")
+imageObj = plt.imread('image_ref/18_original.png')
+# distribution(imageObj, logistic, 120, 40, "plot")
+hist_img = distribution(imageObj, logistic, 120, 40, "value")
+plt.imshow(hist_img)
 #%%
-im = Image.open("image_ref/04_original.png")
-im.show()
-rgb = np.array(im)
+rgb = np.array(hist_img)
 rgb = rgb / 255.
 shape = rgb.shape
-jch = rgb2jch(rgb.reshape(-1, 3), "full-backlight")
-print(jch.shape)
-enhanced_rgb = jch2rgb(jch, "low-backlight").reshape(shape)
-im = Image.fromarray(enhanced_rgb)
-im.show()
-# %%
+jch = rgb2jch(rgb.reshape(-1, 3), "low-backlight")
+enhanced_rgb = jch2rgb(jch, "full-backlight").reshape(shape)
+enhanced_img = Image.fromarray(enhanced_rgb)
+# enhance_im.save("18_dim.png")
+enhanced_img.show()
+#%%
 clip = clipped(jch, enhanced_rgb.reshape(-1, 3), rgb.reshape(-1, 3)).reshape(shape)
-im = Image.fromarray(clip)
-im.show()
-# %%
+clip_img = Image.fromarray(clip)
+clip_img.show()
+#%%
+fig, ax = plt.subplots(1,2, figsize=(8,5))
+ax[0].imshow(hist_img)
+ax[0].set_title('original Image')
+ax[0].set_xticks([])
+ax[0].set_yticks([])
+ax[1].imshow(enhanced_img)
+ax[1].set_title('Enhanced Image')
+ax[1].set_xticks([])
+ax[1].set_yticks([])
+# ax[2].imshow(clip_img)
+# ax[2].set_title('Clipped Image')
+# ax[2].set_xticks([])
+# ax[2].set_yticks([])
