@@ -30,20 +30,24 @@ def individual_channel(image, dist, channel):
     im_channel = img_as_ubyte(image[:,:,channel])
     freq_h, bins_h = histogram(im_channel)
     freq, bins = cumulative_distribution(im_channel, nbins=256)
-    # print(freq)
+    freq = np.pad(freq, (0, 256-len(freq)), 'maximum')
     new_vals = np.interp(freq, dist.cdf(np.arange(0,256)), 
                                np.arange(0,256))
-    return new_vals[im_channel].astype(np.uint8)
+    # return new_vals[im_channel].astype(np.uint8)
+    return new_vals[im_channel]
 
 def Histogram_Correction(image, function, mean, std, output="value"):
+    ycrcb = cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
     dist = function(mean, std)
     image_intensity = img_as_ubyte(rgb2gray(image))
-    red = individual_channel(image, dist, 0)
-    green = individual_channel(image, dist, 1)
-    blue = individual_channel(image, dist, 2)
+    # red = individual_channel(image, dist, 0)
+    # green = individual_channel(image, dist, 1)
+    # blue = individual_channel(image, dist, 2)
+    ycrcb[:,:,0] = individual_channel(ycrcb, dist, 0) / 255.
 
     if output=="value":
-        return np.dstack((red, green, blue))
+        # return np.dstack((red, green, blue))
+        return cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2RGB)
 
     elif output=="plot":
         fig, ax = plt.subplots(1,3, figsize=(8,5))
@@ -347,13 +351,13 @@ def clipped(jch, rgb_c, rgb_i):
     RGB = RGB.astype('uint8')
     return RGB
 
-# %%
-file = "image_ref/18_original.png"
+#%%
+file = "image_ref/04_original.png"
 ori_img = Image.open(file)
 imageObj = plt.imread(file)
 head = "04"
 # Histogram_Correction(imageObj, logistic, 120, 40, "plot")
-hist_img = Histogram_Correction(imageObj, logistic, 120, 40, "value")
+hist_img = Histogram_Correction(imageObj, logistic, 135, 35, "value")
 # plt.imshow(hist_img)
 img = ori_img
 # img = hist_img
@@ -393,14 +397,16 @@ enhanced_img = Image.fromarray(clip)
 # enhanced_img.show()
 
 fig, ax = plt.subplots(1,2, figsize=(8,5))
-ax[0].imshow(dim_img)
-ax[0].set_title('Dim Image')
+# ax[0].imshow(dim_img)
+ax[0].imshow(imageObj)
+# ax[0].set_title('Dim Image')
 ax[0].set_xticks([])
 ax[0].set_yticks([])
-ax[1].imshow(enhanced_img)
-ax[1].set_title('Enhanced Image')
+# ax[1].imshow(enhanced_img)
+ax[1].imshow(hist_img)
+# ax[1].set_title('Enhanced Image')
 ax[1].set_xticks([])
 ax[1].set_yticks([])
 # %%
-# Histogram_Correction(clip, logistic, 120, 40, "plot")
+Histogram_Correction(clip, logistic, 120, 40, "plot")
 # %%
