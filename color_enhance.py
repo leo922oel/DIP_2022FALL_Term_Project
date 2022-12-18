@@ -28,12 +28,14 @@ M_h = np.array([
 
 def individual_channel(image, dist, channel):
     im_channel = img_as_ubyte(image[:,:,channel])
-    freq, bins = cumulative_distribution(im_channel)
+    freq_h, bins_h = histogram(im_channel)
+    freq, bins = cumulative_distribution(im_channel, nbins=256)
+    # print(freq)
     new_vals = np.interp(freq, dist.cdf(np.arange(0,256)), 
                                np.arange(0,256))
     return new_vals[im_channel].astype(np.uint8)
 
-def distribution(image, function, mean, std, output="value"):
+def Histogram_Correction(image, function, mean, std, output="value"):
     dist = function(mean, std)
     image_intensity = img_as_ubyte(rgb2gray(image))
     red = individual_channel(image, dist, 0)
@@ -47,6 +49,11 @@ def distribution(image, function, mean, std, output="value"):
         fig, ax = plt.subplots(1,3, figsize=(8,5))
         freq, bins = cumulative_distribution(image_intensity)
         ax[0].step(bins, freq, c='b', label='Actual CDF')
+        # new_vals = np.interp(freq, dist.cdf(np.arange(0,256)), 
+                            #    np.arange(0,256))
+        # freq_, bins_ = cumulative_distribution(new_vals)
+        # ax[0].plot(bins_, freq_, 
+                #    c='black', label='interp CDF')
         ax[0].plot(dist.cdf(np.arange(0,256)), 
                    c='r', label='Target CDF')
         ax[0].legend()
@@ -97,7 +104,6 @@ def xyz2rgb(xyz, light_type="low-backlight"):
     # RGB = RGB / 255.
     RGB = np.where(RGB < 0, 0, RGB)
     RGB = Gamma_correction(RGB, light_type, mapping=True)
-    print(RGB)
     RGB = np.around(RGB*255)
     RGB = np.where(RGB <= 0, 0, RGB)
     RGB = np.where(RGB > 255, 255, RGB)
@@ -342,35 +348,59 @@ def clipped(jch, rgb_c, rgb_i):
     return RGB
 
 # %%
-# img = Image.open("image_ref/04_original.png")
-imageObj = plt.imread('image_ref/18_original.png')
-# distribution(imageObj, logistic, 120, 40, "plot")
-hist_img = distribution(imageObj, logistic, 120, 40, "value")
-plt.imshow(hist_img)
+file = "image_ref/18_original.png"
+ori_img = Image.open(file)
+imageObj = plt.imread(file)
+head = "04"
+# Histogram_Correction(imageObj, logistic, 120, 40, "plot")
+hist_img = Histogram_Correction(imageObj, logistic, 120, 40, "value")
+# plt.imshow(hist_img)
+img = ori_img
+# img = hist_img
 #%%
-rgb = np.array(hist_img)
+rgb = np.array(img)
 rgb = rgb / 255.
 shape = rgb.shape
-jch = rgb2jch(rgb.reshape(-1, 3), "low-backlight")
-enhanced_rgb = jch2rgb(jch, "full-backlight").reshape(shape)
-enhanced_img = Image.fromarray(enhanced_rgb)
-# enhance_im.save("18_dim.png")
-enhanced_img.show()
+dim_rgb = xyz2rgb(rgb2xyz(rgb, "low-backlight"), "full-backlight")
+dim_img = Image.fromarray(dim_rgb)
+# dim_img.show()
 #%%
+rgb = np.array(img)
+rgb = rgb / 255.
+jch = rgb2jch(rgb.reshape(-1, 3), "full-backlight")
+enhanced_rgb = jch2rgb(jch, "low-backlight").reshape(shape)
 clip = clipped(jch, enhanced_rgb.reshape(-1, 3), rgb.reshape(-1, 3)).reshape(shape)
-clip_img = Image.fromarray(clip)
-clip_img.show()
-#%%
+enhanced_img = Image.fromarray(clip)
+# enhanced_img.show()
+
 fig, ax = plt.subplots(1,2, figsize=(8,5))
-ax[0].imshow(hist_img)
-ax[0].set_title('original Image')
+ax[0].imshow(img)
+ax[0].set_title('Original Image')
 ax[0].set_xticks([])
 ax[0].set_yticks([])
 ax[1].imshow(enhanced_img)
 ax[1].set_title('Enhanced Image')
 ax[1].set_xticks([])
 ax[1].set_yticks([])
-# ax[2].imshow(clip_img)
-# ax[2].set_title('Clipped Image')
-# ax[2].set_xticks([])
-# ax[2].set_yticks([])
+#%%
+rgb = dim_rgb
+rgb = rgb / 255.
+shape = rgb.shape
+jch = rgb2jch(rgb.reshape(-1, 3), "full-backlight")
+enhanced_rgb = jch2rgb(jch, "low-backlight").reshape(shape)
+clip = clipped(jch, enhanced_rgb.reshape(-1, 3), rgb.reshape(-1, 3)).reshape(shape)
+enhanced_img = Image.fromarray(clip)
+# enhanced_img.show()
+
+fig, ax = plt.subplots(1,2, figsize=(8,5))
+ax[0].imshow(dim_img)
+ax[0].set_title('Dim Image')
+ax[0].set_xticks([])
+ax[0].set_yticks([])
+ax[1].imshow(enhanced_img)
+ax[1].set_title('Enhanced Image')
+ax[1].set_xticks([])
+ax[1].set_yticks([])
+# %%
+# Histogram_Correction(clip, logistic, 120, 40, "plot")
+# %%
