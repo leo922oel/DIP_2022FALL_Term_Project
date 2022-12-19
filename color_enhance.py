@@ -342,18 +342,18 @@ def main(args):
     display = None
 
     img = ori_img
-    if args.use_HC:
-        hist_img = Histogram_Correction(ori_img, logistic, args.mean, args.std, "value")
-        # display = hist_img
-        display = Image.fromarray(np.round(hist_img*255).astype("uint8"))
-        img = hist_img
     if args.sim_dim:
         rgb = np.array(img)
         # rgb = rgb / 255.
         shape = rgb.shape
         dim_rgb = xyz2rgb(rgb2xyz(rgb, "low-backlight"), "full-backlight")
         display = Image.fromarray(dim_rgb)
-        img = dim_rgb / 255.
+        img = (dim_rgb / 255.).astype("float32")
+    if args.use_HC:
+        hist_img = Histogram_Correction(img, logistic, args.mean, args.std, "value")
+        # display = hist_img
+        display = Image.fromarray(np.round(hist_img*255).astype("uint8"))
+        img = hist_img
     if args.use_CE:
         rgb = np.array(img)
         # rgb = rgb / 255.
