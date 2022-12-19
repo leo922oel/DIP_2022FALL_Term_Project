@@ -1,4 +1,3 @@
-#%%
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,7 +10,7 @@ from scipy.stats import cauchy, logistic
 
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
-#%%
+
 M_f = np.array([[95.57, 64.67, 33.01],
             [49.49, 137.29, 14.76],
             [0.44, 27.21, 169.83]])
@@ -47,7 +46,6 @@ def Histogram_Correction(image, function, mean, std, output="value"):
     rgb = np.where(rgb < 0, 0, rgb)
 
     if output=="value":
-        # return np.dstack((red, green, blue))
         return rgb
 
     elif output=="plot":
@@ -55,11 +53,6 @@ def Histogram_Correction(image, function, mean, std, output="value"):
         fig, ax = plt.subplots(1,3, figsize=(12,5))
         freq, bins = cumulative_distribution(image_intensity)
         ax[0].step(bins, freq, c='b', label='Actual CDF')
-        # new_vals = np.interp(freq, dist.cdf(np.arange(0,256)), 
-                            #    np.arange(0,256))
-        # freq_, bins_ = cumulative_distribution(new_vals)
-        # ax[0].plot(bins_, freq_, 
-                #    c='black', label='interp CDF')
         ax[0].plot(dist.cdf(np.arange(0,256)), 
                    c='r', label='Target CDF')
         ax[0].legend()
@@ -370,52 +363,9 @@ def main(args):
         clip = clipped(jch, enhanced_rgb.reshape(-1, 3), rgb.reshape(-1, 3)).reshape(shape)
         display = Image.fromarray(clip)
     if args.verbosity:
-        # fig, ax = plt.subplots(1,1, figsize=(8,5))
-        # ax.imshow(display)
-        # ax.set_title('Result Image')
-        # ax.set_xticks([])
-        # ax.set_yticks([])
         display.show()
     if args.save:
         display.save(f"{args.output_name}.png")
-        # plt.savefig(clip, args.output_name)
-"""
-#%%
-file = "image_ref/18_original.png"
-# ori_img = Image.open(file)
-ori_img = plt.imread(file)
-hist_img = Histogram_Correction(ori_img, logistic, 90, 80, "value")
-# plt.imshow(hist_img)
-# img = ori_img
-img = hist_img
-
-#%%
-rgb = np.array(img)
-# rgb = rgb / 255.
-shape = rgb.shape
-dim_rgb = xyz2rgb(rgb2xyz(rgb, "low-backlight"), "full-backlight")
-dim_img = Image.fromarray(dim_rgb)
-# dim_img.show()
-#%%
-rgb = np.array(img)
-# rgb = rgb / 255.
-jch = rgb2jch(rgb.reshape(-1, 3), "full-backlight")
-enhanced_rgb = jch2rgb(jch, "low-backlight").reshape(shape)
-clip = clipped(jch, enhanced_rgb.reshape(-1, 3), rgb.reshape(-1, 3)).reshape(shape)
-enhanced_img = Image.fromarray(clip)
-# enhanced_img.show()
-
-#%%
-rgb = dim_rgb
-rgb = rgb / 255.
-shape = rgb.shape
-jch = rgb2jch(rgb.reshape(-1, 3), "full-backlight")
-enhanced_rgb = jch2rgb(jch, "low-backlight").reshape(shape)
-clip = clipped(jch, enhanced_rgb.reshape(-1, 3), rgb.reshape(-1, 3)).reshape(shape)
-enhanced_img = Image.fromarray(clip)
-# enhanced_img.show()
-
-"""
 
 def parse_args() -> Namespace:
     parser = ArgumentParser()
